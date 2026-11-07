@@ -21,6 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
 
@@ -119,6 +120,13 @@ jobs:
             echo "::error::BLINKIT_API_KEY GitHub secret is missing. Blinkit was not checked."
             exit 1
           fi
+
+      - name: Verify checked revision
+        run: |
+          echo "Workflow ref: $GITHUB_REF"
+          echo "Checked commit: $(git rev-parse HEAD)"
+          grep -n "Blinkit is location-aware" backend/src/index.ts || true
+          grep -n "locationStatuses" backend/src/platforms/blinkit.ts || true
 
       - name: Run stock check
         id: stock-check
