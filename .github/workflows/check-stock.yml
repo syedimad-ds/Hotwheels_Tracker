@@ -113,6 +113,13 @@ jobs:
             fi
           fi
 
+      - name: Validate Blinkit configuration
+        run: |
+          if [ -z "$BLINKIT_API_KEY" ]; then
+            echo "::error::BLINKIT_API_KEY GitHub secret is missing. Blinkit was not checked."
+            exit 1
+          fi
+
       - name: Run stock check
         id: stock-check
         run: |
