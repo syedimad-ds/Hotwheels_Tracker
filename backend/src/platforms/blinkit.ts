@@ -95,6 +95,7 @@ export async function checkBlinkit(product: ProductConfig): Promise<StockResult>
 
   const checked: string[] = [];
   const errors: string[] = [];
+  const locationErrors = new Map<string, string>();
   const matches: Array<{ location: BlinkitLocation; item: BlinkitItem }> = [];
 
   for (const location of locations) {
@@ -136,7 +137,11 @@ export async function checkBlinkit(product: ProductConfig): Promise<StockResult>
     const bestLocationMatch = locationInStock[0];
     return {
       pincode: location.pincode,
-      status: bestLocationMatch ? 'in_stock' : 'out_of_stock',
+      status: bestLocationMatch
+        ? 'in_stock'
+        : locationErrors.has(location.pincode)
+          ? 'unknown'
+          : 'out_of_stock',
       price: typeof bestLocationMatch?.item.price === 'number' ? bestLocationMatch.item.price : undefined,
       inventory: typeof bestLocationMatch?.item.inventory === 'number' ? bestLocationMatch.item.inventory : undefined,
       productName: bestLocationMatch?.item.name,
