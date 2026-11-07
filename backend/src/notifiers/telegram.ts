@@ -148,6 +148,10 @@ export function formatPriceThresholdAlert(
         message += ` <i>(₹${savings.toLocaleString('en-IN')} below target!)</i>`;
       }
     }
+    const location = result.rawData?.location as { pincode?: string } | undefined;
+    if (location?.pincode) {
+      message += ` — PIN ${location.pincode}`;
+    }
     message += `\n`;
   }
 
@@ -170,6 +174,10 @@ export function formatPeriodicSummary(results: StockResult[], productName: strin
       message += `${platformEmoji} ${capitalize(result.platform)}`;
       if (result.price) {
         message += ` - ₹${result.price.toLocaleString('en-IN')}`;
+      }
+      const location = result.rawData?.location as { pincode?: string } | undefined;
+      if (location?.pincode) {
+        message += ` — PIN ${location.pincode}`;
       }
       message += `\n`;
     }
