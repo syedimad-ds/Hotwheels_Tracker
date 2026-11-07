@@ -1,230 +1,205 @@
-import { StockResult, PlatformChecker, createBaseResult, fetchWithRetry, sleep } from './base';
-import { ProductConfig } from '../config';
-import * as cheerio from 'cheerio';
+import axios from 'axios';
+import { StockResult, createBaseResult } from './base';
+import { ProductConfig, BlinkitLocation, config } from '../config';
+
+interface BlinkitItem {
+  id?: string;
+  name?: string;
+  brand?: string;
+  unit?: string;
+  price?: number;
+  mrp?: number;
+  in_stock?: boolean;
+  inventory?: number;
+  delivery_eta_minutes?: number;
+  merchant_id?: string;
+  url?: string;
+  image?: string;
+}
+
+interface BlinkitSearchResponse {
+  success?: boolean;
+  items?: BlinkitItem[];
+  count?: number;
+  cached?: boolean;
+  credits_used?: number;
+  error?: string;
+}
+
+const API_URL = 'https://api.api.sh/blinkit/v1/search';
+
+function normalize(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function isHotWheels(item: BlinkitItem): boolean {
+  const haystack = normalize([item.name, item.brand].filter(Boolean).join(' '));
+  return haystack.includes('hot wheels') || haystack.includes('hotwheels');
+}
+
+function locationLabel(location: BlinkitLocation): string {
+  return 'PIN ' + location.pincode;
+}
+
+async function searchLocation(
+  query: string,
+  location: BlinkitLocation,
+): Promise<BlinkitItem[]> {
+  const apiKey = process.env.BLINKIT_API_KEY;
+  if (!apiKey) {
+    throw new Error('BLINKIT_API_KEY is not configured');
+  }
+
+  const response = await axios.get<BlinkitSearchResponse>(API_URL, {
+    params: {
+      q: query,
+      latitude: location.latitude,
+      longitude: location.longitude,
+    },
+    headers: {
+      'x-api-key': apiKey,
+      Accept: 'application/json',
+      'User-Agent': config.userAgent,
+    },
+    timeout: config.requestTimeout,
+    validateStatus: () => true,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error('API.SH Blinkit search returned HTTP ' + response.status);
+  }
+
+  if (response.data?.success === false) {
+    throw new Error(response.data.error || 'API.SH Blinkit search failed');
+  }
+
+  return Array.isArray(response.data?.items) ? response.data.items : [];
+}
 
 export async function checkBlinkit(product: ProductConfig): Promise<StockResult> {
   const result = createBaseResult('blinkit', product.id, product.name);
-  
-  if (!product.urls.blinkit) {
-    result.error = 'No Blinkit URL configured';
+  const apiKey = process.env.BLINKIT_API_KEY;
+
+  if (!apiKey) {
+    result.error = 'BLINKIT_API_KEY is not configured';
     return result;
   }
 
-  try {
-    // Blinkit uses GraphQL API - we'll try the product page first
-    const url = product.urls.blinkit;
-    
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-      'Sec-Fetch-User': '?1',
-      'Cache-Control': 'max-age=0',
-    };
+  const locations = config.blinkitPincodes?.length
+    ? config.blinkitPincodes
+    : [{ pincode: product.pincode, latitude: 17.3862, longitude: 78.4620 }];
 
-    // Try to get product page
-    const response = await fetchWithRetry(url, { headers });
-    const html = await response.text();
-    const $ = cheerio.load(html);
+  const queries = product.blinkitSearchQueries?.length
+    ? product.blinkitSearchQueries
+    : ['hot wheels'];
 
-    // Check for common out-of-stock indicators
-    const outOfStockSelectors = [
-      'button:contains("Out of Stock")',
-      'button:contains("Notify Me")',
-      '.out-of-stock',
-      '[data-testid="out-of-stock"]',
-      '.product-unavailable',
-      'span:contains("OUT OF STOCK")',
-      'div:contains("This item is currently unavailable")',
-    ];
+  const checked: string[] = [];
+  const errors: string[] = [];
+  const locationErrors = new Map<string, string>();
+  const matches: Array<{ location: BlinkitLocation; item: BlinkitItem }> = [];
 
-    let isOutOfStock = false;
-    for (const selector of outOfStockSelectors) {
-      if ($(selector).length > 0) {
-        isOutOfStock = true;
-        break;
-      }
-    }
+  for (const location of locations) {
+    let locationHadResults = false;
 
-    // Check for in-stock indicators
-    const inStockSelectors = [
-      'button:contains("Add to Cart")',
-      'button:contains("Buy Now")',
-      '[data-testid="add-to-cart"]',
-      '.add-to-cart-btn',
-      'button:contains("ADD TO CART")',
-    ];
+    for (const query of queries) {
+      try {
+        const items = await searchLocation(query, location);
+        locationHadResults = locationHadResults || items.length > 0;
 
-    let isInStock = false;
-    for (const selector of inStockSelectors) {
-      if ($(selector).length > 0) {
-        isInStock = true;
-        break;
-      }
-    }
+        for (const item of items) {
+          if (isHotWheels(item)) {
+            matches.push({ location, item });
+          }
+        }
 
-    // Try to extract price
-    const priceSelectors = [
-      '[data-testid="price"]',
-      '.price',
-      '.product-price',
-      'span:contains("₹")',
-      'div:contains("₹")',
-    ];
-
-    let price: number | undefined;
-    for (const selector of priceSelectors) {
-      const element = $(selector).first();
-      if (element.length > 0) {
-        const text = element.text();
-        const match = text.match(/₹\s*([\d,]+)/);
-        if (match) {
-          price = parseInt(match[1].replace(/,/g, ''), 10);
+        if (items.length > 0) {
           break;
         }
+      } catch (error) {
+        errors.push(
+          locationLabel(location) + ' "' + query + '": ' +
+          (error instanceof Error ? error.message : 'request failed'),
+        );
       }
     }
 
-    // Try to find product name from page
-    const nameSelectors = [
-      'h1[data-testid="product-name"]',
-      'h1.product-name',
-      '.product-title',
-      'h1',
-    ];
-
-    let productName = product.name;
-    for (const selector of nameSelectors) {
-      const element = $(selector).first();
-      if (element.length > 0 && element.text().trim()) {
-        productName = element.text().trim();
-        break;
-      }
-    }
-
-    result.productName = productName;
-    result.price = price;
-    result.currency = 'INR';
-
-    if (isOutOfStock && !isInStock) {
-      result.available = false;
-      result.stockLevel = 'out_of_stock';
-    } else if (isInStock && !isOutOfStock) {
-      result.available = true;
-      result.stockLevel = 'in_stock';
-    } else {
-      // Ambiguous - check for JSON-LD structured data
-      const jsonLd = $('script[type="application/ld+json"]').map((_, el) => {
-        try {
-          return JSON.parse($(el).html() || '');
-        } catch {
-          return null;
-        }
-      }).get();
-
-      for (const data of jsonLd) {
-        if (data && data['@type'] === 'Product') {
-          if (data.offers && data.offers.availability) {
-            const availability = data.offers.availability.toLowerCase();
-            if (availability.includes('instock') || availability.includes('in_stock')) {
-              result.available = true;
-              result.stockLevel = 'in_stock';
-            } else if (availability.includes('outofstock') || availability.includes('out_of_stock')) {
-              result.available = false;
-              result.stockLevel = 'out_of_stock';
-            }
-          }
-          if (data.offers && data.offers.price) {
-            result.price = parseFloat(data.offers.price);
-          }
-          break;
-        }
-      }
-
-      if (result.stockLevel === 'unknown') {
-        result.error = 'Could not determine stock status from page';
-      }
-    }
-
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : 'Unknown error';
-    result.available = false;
-    result.stockLevel = 'unknown';
+    checked.push(location.pincode + ':' + (locationHadResults ? 'results' : 'no-results'));
   }
+
+  const inStock = matches.filter(({ item }) => item.in_stock === true);
+  const lowStock = matches.filter(
+    ({ item }) => item.in_stock === true && typeof item.inventory === 'number' && item.inventory <= 3,
+  );
+
+  const locationStatuses = locations.map(location => {
+    const locationMatches = matches.filter(({ location: matchedLocation }) => matchedLocation.pincode === location.pincode);
+    const locationInStock = locationMatches.filter(({ item }) => item.in_stock === true);
+    const bestLocationMatch = locationInStock[0];
+    return {
+      pincode: location.pincode,
+      status: bestLocationMatch
+        ? 'in_stock'
+        : locationErrors.has(location.pincode)
+          ? 'unknown'
+          : 'out_of_stock',
+      price: typeof bestLocationMatch?.item.price === 'number' ? bestLocationMatch.item.price : undefined,
+      inventory: typeof bestLocationMatch?.item.inventory === 'number' ? bestLocationMatch.item.inventory : undefined,
+      productName: bestLocationMatch?.item.name,
+    };
+  });
+
+  if (inStock.length > 0) {
+    const best = lowStock[0] || inStock[0];
+    const item = best.item;
+
+    result.available = true;
+    result.stockLevel = lowStock.length > 0 ? 'low_stock' : 'in_stock';
+    result.productName = (item.name || product.name) + ' (' + best.location.pincode + ')';
+    result.price = typeof item.price === 'number' ? item.price : undefined;
+    result.currency = 'INR';
+    result.rawData = {
+      source: 'api.sh',
+      location: best.location,
+      locationStatuses,
+      checkedLocations: locations.map(location => location.pincode),
+      matches: inStock.map(({ location, item: matched }) => ({
+        pincode: location.pincode,
+        id: matched.id,
+        name: matched.name,
+        price: matched.price,
+        mrp: matched.mrp,
+        inventory: matched.inventory,
+        merchantId: matched.merchant_id,
+        url: matched.url,
+      })),
+    };
+    return result;
+  }
+
+  result.available = false;
+  result.stockLevel = 'out_of_stock';
+  result.error = errors.length
+    ? 'No in-stock Hot Wheels found. ' + errors.join(' | ')
+    : 'No in-stock Hot Wheels found. Checked ' + checked.join(', ');
+
+  result.rawData = {
+    source: 'api.sh',
+    checkedLocations: locations.map(location => location.pincode),
+    locationStatuses,
+    matchingProducts: matches.map(({ location, item }) => ({
+      pincode: location.pincode,
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      mrp: item.mrp,
+      inventory: item.inventory,
+      inStock: item.in_stock,
+    })),
+  };
 
   return result;
 }
 
-// Alternative: Try Blinkit's API directly (if we can find the right endpoint)
 export async function checkBlinkitAPI(product: ProductConfig): Promise<StockResult> {
-  const result = createBaseResult('blinkit', product.id, product.name);
-  
-  if (!product.urls.blinkit) {
-    result.error = 'No Blinkit URL configured';
-    return result;
-  }
-
-  // Extract product ID from URL
-  const urlMatch = product.urls.blinkit.match(/\/product\/([^\/]+)/);
-  const productSlug = urlMatch ? urlMatch[1] : null;
-
-  if (!productSlug) {
-    result.error = 'Could not extract product ID from URL';
-    return result;
-  }
-
-  try {
-    // Blinkit's GraphQL endpoint (may require auth)
-    const graphqlUrl = 'https://blinkit.com/v6/graphql';
-    
-    const query = `
-      query GetProduct($slug: String!) {
-        product(slug: $slug) {
-          id
-          name
-          price
-          mrp
-          inventory {
-            available
-            quantity
-          }
-        }
-      }
-    `;
-
-    const response = await fetchWithRetry(graphqlUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({
-        query,
-        variables: { slug: productSlug },
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json() as { data?: { product?: any } };
-      if (data.data && data.data.product) {
-        const p = data.data.product;
-        result.productName = p.name || product.name;
-        result.price = p.price;
-        result.currency = 'INR';
-        result.available = p.inventory?.available === true;
-        result.stockLevel = p.inventory?.available ? 'in_stock' : 'out_of_stock';
-      }
-    }
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : 'API check failed';
-  }
-
-  return result;
+  return checkBlinkit(product);
 }

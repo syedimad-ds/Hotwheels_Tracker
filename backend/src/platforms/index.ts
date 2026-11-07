@@ -1,4 +1,4 @@
-import { checkBlinkit, checkBlinkitAPI } from './blinkit';
+import { checkBlinkit } from './blinkit';
 import { checkZepto, checkZeptoAPI } from './zepto';
 import { checkFirstCry, checkFirstCryAPI } from './firstcry';
 import { checkAmazon, checkAmazonAPI } from './amazon';
@@ -13,7 +13,7 @@ export interface PlatformModule {
 }
 
 export const platforms: Record<PlatformName, PlatformModule> = {
-  blinkit: { check: checkBlinkit, checkAPI: checkBlinkitAPI },
+  blinkit: { check: checkBlinkit },
   zepto: { check: checkZepto, checkAPI: checkZeptoAPI },
   firstcry: { check: checkFirstCry, checkAPI: checkFirstCryAPI },
   amazon: { check: checkAmazon, checkAPI: checkAmazonAPI },
@@ -29,11 +29,10 @@ export async function checkPlatform(platform: PlatformName, product: ProductConf
       available: false,
       checkedAt: new Date().toISOString(),
       stockLevel: 'unknown',
-      error: `Unknown platform: ${platform}`,
+      error: 'Unknown platform: ' + platform,
     };
   }
 
-  // Try API first, fallback to HTML scraping
   if (platformModule.checkAPI) {
     try {
       const apiResult = await platformModule.checkAPI(product);
@@ -41,11 +40,10 @@ export async function checkPlatform(platform: PlatformName, product: ProductConf
         return apiResult;
       }
     } catch (error) {
-      console.warn(`${platform} API check failed, falling back to HTML:`, error);
+      console.warn(platform + ' API check failed, falling back to HTML:', error);
     }
   }
 
-  // Fallback to HTML scraping
   return platformModule.check(product);
 }
 
@@ -54,17 +52,18 @@ export async function checkAllPlatforms(product: ProductConfig): Promise<StockRe
   const results: StockResult[] = [];
 
   for (const platform of platformNames) {
-    // Only check platforms that have URLs configured
-    if (product.urls[platform]) {
-      console.log(`Checking ${platform} for ${product.name}...`);
+    const configured =
+      Boolean(product.urls[platform]) ||
+      (platform === 'blinkit' && Boolean(process.env.BLINKIT_API_KEY));
+
+    if (configured) {
+      console.log('Checking ' + platform + ' for ' + product.name + '...');
       try {
         const result = await checkPlatform(platform, product);
         results.push(result);
-        
-        // Small delay between requests to be polite
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
-        console.error(`Error checking ${platform}:`, error);
+        console.error('Error checking ' + platform + ':', error);
         results.push({
           platform,
           productId: product.id,
@@ -76,7 +75,7 @@ export async function checkAllPlatforms(product: ProductConfig): Promise<StockRe
         });
       }
     } else {
-      console.log(`Skipping ${platform} - no URL configured`);
+      console.log('Skipping ' + platform + ' - not configured');
       results.push({
         platform,
         productId: product.id,
@@ -84,7 +83,9 @@ export async function checkAllPlatforms(product: ProductConfig): Promise<StockRe
         available: false,
         checkedAt: new Date().toISOString(),
         stockLevel: 'unknown',
-        error: 'No URL configured for this platform',
+        error: platform === 'blinkit'
+          ? 'BLINKIT_API_KEY not configured'
+          : 'No ' + platform + ' URL configured',
       });
     }
   }

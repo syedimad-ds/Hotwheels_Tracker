@@ -26,6 +26,11 @@ async function main() {
       .filter(([_, url]) => url)
       .map(([platform]) => platform);
     
+    // Blinkit is location-aware and configured through the API key rather than a product URL.
+    if (process.env.BLINKIT_API_KEY) {
+      configuredPlatforms.push('blinkit');
+    }
+    
     if (configuredPlatforms.length === 0) {
       console.log('   ⚠️ No platform URLs configured, skipping');
       continue;

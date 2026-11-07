@@ -2,28 +2,26 @@ name: Check Hot Wheels Stock
 
 on:
   schedule:
-    # Run every 10 minutes (adjust as needed)
     - cron: '*/10 * * * *'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   check-stock:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    
+
     env:
-      # Upstash Redis credentials (set in GitHub Secrets)
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
-      
-      # Telegram credentials (set in GitHub Secrets)
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      BLINKIT_API_KEY: ${{ secrets.BLINKIT_API_KEY }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
 
@@ -63,22 +61,29 @@ jobs:
               const chatId = process.env.TELEGRAM_CHAT_ID || "";
               const config = {
                 products: [{
-                  id: "hw-fast-furious-orange",
-                  name: "Hot Wheels Premium Fast & Furious Die-Cast Toy Car (Orange)",
-                  pincode: "110001",
+                  id: "hot-wheels-blinkit",
+                  name: "Hot Wheels",
+                  pincode: "500001",
                   urls: {
                     firstcry: "https://www.firstcry.com/hot-wheels/hot-wheels-premium-fast-and-furious-die-cast-toy-car-for-adult-collectors-orange/21161951/product-detail"
                   },
                   checkIntervalMinutes: 10,
                   notifyOnRestock: true,
-                  targetPrice: 199
+                  targetPrice: 199,
+                  blinkitSearchQueries: ["hot wheels"]
                 }],
                 telegram: {
                   botToken,
                   chatId,
                   enabled: Boolean(botToken && chatId)
                 },
-                defaultPincode: "110001",
+                defaultPincode: "500001",
+                blinkitPincodes: [
+                  { pincode: "500001", latitude: 17.3862, longitude: 78.4620 },
+                  { pincode: "500028", latitude: 17.3901, longitude: 78.4458 },
+                  { pincode: "500036", latitude: 17.3742, longitude: 78.5121 },
+                  { pincode: "500024", latitude: 17.3726, longitude: 78.4917 }
+                ],
                 userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 requestTimeout: 15000,
                 maxRetries: 2
@@ -109,6 +114,20 @@ jobs:
             fi
           fi
 
+      - name: Validate Blinkit configuration
+        run: |
+          if [ -z "$BLINKIT_API_KEY" ]; then
+            echo "::error::BLINKIT_API_KEY GitHub secret is missing. Blinkit was not checked."
+            exit 1
+          fi
+
+      - name: Verify checked revision
+        run: |
+          echo "Workflow ref: $GITHUB_REF"
+          echo "Checked commit: $(git rev-parse HEAD)"
+          grep -n "Blinkit is location-aware" backend/src/index.ts || true
+          grep -n "locationStatuses" backend/src/platforms/blinkit.ts || true
+
       - name: Run stock check
         id: stock-check
         run: |
@@ -121,7 +140,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           if [ -f backend/storage/status.json ]; then
             git add backend/storage/status.json
             if ! git diff --staged --quiet; then

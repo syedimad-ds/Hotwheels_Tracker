@@ -148,6 +148,10 @@ export function formatPriceThresholdAlert(
         message += ` <i>(₹${savings.toLocaleString('en-IN')} below target!)</i>`;
       }
     }
+    const location = result.rawData?.location as { pincode?: string } | undefined;
+    if (location?.pincode) {
+      message += ` — PIN ${location.pincode}`;
+    }
     message += `\n`;
   }
 
@@ -167,14 +171,60 @@ export function formatPeriodicSummary(results: StockResult[], productName: strin
     message += `✅ <b>IN STOCK (${inStock.length}):</b>\n`;
     for (const result of inStock) {
       const platformEmoji = getPlatformEmoji(result.platform);
-      message += `${platformEmoji} ${capitalize(result.platform)}`;
-      if (result.price) {
-        message += ` - ₹${result.price.toLocaleString('en-IN')}`;
+      const locationStatuses = result.rawData?.locationStatuses as Array<{
+        pincode: string;
+        status: string;
+        price?: number;
+        inventory?: number;
+      }> | undefined;
+
+      if (result.platform === 'blinkit' && locationStatuses?.length) {
+        message += `${platformEmoji} <b>Blinkit</b>\n`;
+        for (const location of locationStatuses) {
+          if (location.status === 'in_stock') {
+            message += `   🟢 PIN ${location.pincode} - ₹${location.price ?? 'N/A'}`;
+            if (location.inventory !== undefined) {
+              message += ` (qty ${location.inventory})`;
+            }
+          } else if (location.status === 'unknown') {
+            message += `   ⚠️ PIN ${location.pincode} - CHECK FAILED`;
+          } else {
+            message += `   🔴 PIN ${location.pincode} - OUT OF STOCK`;
+          }
+          message += `\n`;
+        }
+      } else {
+        message += `${platformEmoji} ${capitalize(result.platform)}`;
+        if (result.price) {
+          message += ` - ₹${result.price.toLocaleString('en-IN')}`;
+        }
+        const location = result.rawData?.location as { pincode?: string } | undefined;
+        if (location?.pincode) {
+          message += ` — PIN ${location.pincode}`;
+        }
+        message += `\n`;
       }
-      message += `\n`;
     }
   } else {
-    message += `❌ <b>OUT OF STOCK everywhere</b>\n`;
+    const blinkitLocationStatuses = results.find(r => r.platform === 'blinkit')?.rawData?.locationStatuses as Array<{
+      pincode: string;
+      status: string;
+      price?: number;
+    }> | undefined;
+
+    if (blinkitLocationStatuses?.length) {
+      message += `❌ <b>OUT OF STOCK everywhere</b>\n`;
+      message += `🛒 <b>Blinkit by PIN</b>\n`;
+      for (const location of blinkitLocationStatuses) {
+        if (location.status === 'unknown') {
+          message += `   ⚠️ PIN ${location.pincode} - CHECK FAILED\n`;
+        } else {
+          message += `   🔴 PIN ${location.pincode} - OUT OF STOCK\n`;
+        }
+      }
+    } else {
+      message += `❌ <b>OUT OF STOCK everywhere</b>\n`;
+    }
   }
 
   message += `\n🕐 ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
