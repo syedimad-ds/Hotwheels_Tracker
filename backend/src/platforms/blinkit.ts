@@ -130,6 +130,19 @@ export async function checkBlinkit(product: ProductConfig): Promise<StockResult>
     ({ item }) => item.in_stock === true && typeof item.inventory === 'number' && item.inventory <= 3,
   );
 
+  const locationStatuses = locations.map(location => {
+    const locationMatches = matches.filter(({ location: matchedLocation }) => matchedLocation.pincode === location.pincode);
+    const locationInStock = locationMatches.filter(({ item }) => item.in_stock === true);
+    const bestLocationMatch = locationInStock[0];
+    return {
+      pincode: location.pincode,
+      status: bestLocationMatch ? 'in_stock' : 'out_of_stock',
+      price: typeof bestLocationMatch?.item.price === 'number' ? bestLocationMatch.item.price : undefined,
+      inventory: typeof bestLocationMatch?.item.inventory === 'number' ? bestLocationMatch.item.inventory : undefined,
+      productName: bestLocationMatch?.item.name,
+    };
+  });
+
   if (inStock.length > 0) {
     const best = lowStock[0] || inStock[0];
     const item = best.item;
@@ -142,6 +155,8 @@ export async function checkBlinkit(product: ProductConfig): Promise<StockResult>
     result.rawData = {
       source: 'api.sh',
       location: best.location,
+      locationStatuses,
+      checkedLocations: locations.map(location => location.pincode),
       matches: inStock.map(({ location, item: matched }) => ({
         pincode: location.pincode,
         id: matched.id,
@@ -165,6 +180,7 @@ export async function checkBlinkit(product: ProductConfig): Promise<StockResult>
   result.rawData = {
     source: 'api.sh',
     checkedLocations: locations.map(location => location.pincode),
+    locationStatuses,
     matchingProducts: matches.map(({ location, item }) => ({
       pincode: location.pincode,
       id: item.id,
