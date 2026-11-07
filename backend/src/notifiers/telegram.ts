@@ -186,6 +186,8 @@ export function formatPeriodicSummary(results: StockResult[], productName: strin
             if (location.inventory !== undefined) {
               message += ` (qty ${location.inventory})`;
             }
+          } else if (location.status === 'unknown') {
+            message += `   ⚠️ PIN ${location.pincode} - CHECK FAILED`;
           } else {
             message += `   🔴 PIN ${location.pincode} - OUT OF STOCK`;
           }
@@ -214,7 +216,11 @@ export function formatPeriodicSummary(results: StockResult[], productName: strin
       message += `❌ <b>OUT OF STOCK everywhere</b>\n`;
       message += `🛒 <b>Blinkit by PIN</b>\n`;
       for (const location of blinkitLocationStatuses) {
-        message += `   🔴 PIN ${location.pincode} - OUT OF STOCK\n`;
+        if (location.status === 'unknown') {
+          message += `   ⚠️ PIN ${location.pincode} - CHECK FAILED\n`;
+        } else {
+          message += `   🔴 PIN ${location.pincode} - OUT OF STOCK\n`;
+        }
       }
     } else {
       message += `❌ <b>OUT OF STOCK everywhere</b>\n`;
