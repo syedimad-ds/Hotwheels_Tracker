@@ -1,4 +1,4 @@
-import { checkBlinkit, checkBlinkitAPI } from './blinkit';
+import { checkBlinkit } from './blinkit';
 import { checkZepto, checkZeptoAPI } from './zepto';
 import { checkFirstCry, checkFirstCryAPI } from './firstcry';
 import { checkAmazon, checkAmazonAPI } from './amazon';
@@ -13,7 +13,7 @@ export interface PlatformModule {
 }
 
 export const platforms: Record<PlatformName, PlatformModule> = {
-  blinkit: { check: checkBlinkit, checkAPI: checkBlinkitAPI },
+  blinkit: { check: checkBlinkit },
   zepto: { check: checkZepto, checkAPI: checkZeptoAPI },
   firstcry: { check: checkFirstCry, checkAPI: checkFirstCryAPI },
   amazon: { check: checkAmazon, checkAPI: checkAmazonAPI },
